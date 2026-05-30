@@ -102,7 +102,7 @@ async function loadConfig() {
         welcomeMessage: 'Bienvenue sur le serveur, {user} ! 🎉',
         autoRole: null, modRole: null, mutedRole: null,
         antiSpam: false, antiSpamThreshold: 5, antiSpamInterval: 3,
-        giveawayChannel: null, prefix: '!',
+        giveawayChannel: null, gameNotifChannel: null, prefix: '!',
     };
 }
 async function saveConfig(cfg)    { await dbSet('config', cfg); }
@@ -125,7 +125,7 @@ let botConfig = {
     welcomeMessage: 'Bienvenue sur le serveur, {user} ! 🎉',
     autoRole: null, modRole: null, mutedRole: null,
     antiSpam: false, antiSpamThreshold: 5, antiSpamInterval: 3,
-    giveawayChannel: null, prefix: '!',
+    giveawayChannel: null, gameNotifChannel: null, prefix: '!',
 };
 const warns    = new Map();
 let tempbans   = {};
@@ -136,7 +136,7 @@ let raidMode   = false;
 
 require('./role-sync')(client);
 require('./recent-games')(client, supabase);
-require('./new-game-notifier')(client, supabase);
+require('./new-game-notifier')(client, supabase, () => botConfig.gameNotifChannel);
 
 // ─── PERSISTANCE JSON ───────────────────────────────────────────────────────
 
@@ -1157,6 +1157,9 @@ function buildConfigEmbed(cfg, client) {
             { name: '🎉 Giveaway', value:
                 `**Canal giveaway :** ${cfgVal(cfg.giveawayChannel)}`,
               inline: false },
+            { name: '🎮 Notifs Jeux', value:
+                `**Canal notifications jeux :** ${cfgVal(cfg.gameNotifChannel)}`,
+              inline: false },
         )
         .setFooter({ text: 'Utilise le menu ci-dessous pour modifier une section' })
         .setTimestamp();
@@ -1171,7 +1174,8 @@ function buildMainMenu() {
                 { label: '📋 Général',        description: 'Préfixe, logs, bienvenue',          value: 'general',   emoji: '📋' },
                 { label: '👥 Rôles',           description: 'Auto-rôle, modérateur, muet',       value: 'roles',     emoji: '👥' },
                 { label: '🛡️ Anti-Spam',       description: 'Seuil et intervalle anti-spam',     value: 'antispam',  emoji: '🛡️' },
-                { label: '🎉 Giveaway',        description: 'Canal des giveaways',               value: 'giveaway',  emoji: '🎉' },
+                { label: '🎉 Giveaway',        description: 'Canal des giveaways',               value: 'giveaway',   emoji: '🎉' },
+                { label: '🎮 Notifs Jeux',      description: 'Canal des nouvelles sorties',        value: 'gamenotif',  emoji: '🎮' },
                 { label: '🔄 Réinitialiser',   description: 'Remettre la config par défaut',     value: 'reset',     emoji: '🔄' },
             ])
     );
@@ -1231,6 +1235,15 @@ function giveawayButtons() {
     ];
 }
 
+function gamenotifButtons() {
+    return [
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('cfg_set_gamenotif_channel').setLabel('🎮 Canal notifs jeux').setStyle(1),
+            new ButtonBuilder().setCustomId('cfg_back').setLabel('↩ Retour').setStyle(4),
+        ),
+    ];
+}
+
 async function askForChannel(interaction, label, cfgKey) {
     await interaction.reply({ content: `📌 **${label}** — Mentionne le salon souhaité (ex: <#123456>) ou tape son ID. Tu as 30s.`, ephemeral: true });
     const filter = m => m.author.id === interaction.user.id;
@@ -1284,7 +1297,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 welcomeMessage: 'Bienvenue sur le serveur, {user} ! 🎉',
                 autoRole: null, modRole: null, mutedRole: null,
                 antiSpam: false, antiSpamThreshold: 5, antiSpamInterval: 3,
-                giveawayChannel: null, prefix: '!',
+                giveawayChannel: null, gameNotifChannel: null, prefix: '!',
             };
             saveConfig(botConfig);
             await interaction.update({
@@ -1303,13 +1316,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
                         .setDescription(`Statut actuel : **${cfgBool(botConfig.antiSpam)}**\nSeuil : \`${botConfig.antiSpamThreshold}\` msgs / \`${botConfig.antiSpamInterval}s\``),
             giveaway: new EmbedBuilder().setTitle('🎉 Configuration — Giveaway').setColor('#5865F2')
                         .setDescription('Configure le canal dédié aux giveaways.'),
+            gamenotif: new EmbedBuilder().setTitle('🎮 Configuration — Notifs Jeux').setColor('#5865F2')
+                        .setDescription('Configure le canal où les nouvelles sorties de jeux sont annoncées.'),
         };
 
         const sectionComponents = {
-            general:  generalButtons(botConfig),
-            roles:    rolesButtons(),
-            antispam: antispamButtons(botConfig),
-            giveaway: giveawayButtons(),
+            general:   generalButtons(botConfig),
+            roles:     rolesButtons(),
+            antispam:  antispamButtons(botConfig),
+            giveaway:  giveawayButtons(),
+            gamenotif: gamenotifButtons(),
         };
 
         await interaction.update({
@@ -1395,7 +1411,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.customId === 'cfg_set_log_channel')       return askForChannel(interaction, 'Canal de logs',      'logChannel');
     if (interaction.customId === 'cfg_set_welcome_channel')   return askForChannel(interaction, 'Canal de bienvenue', 'welcomeChannel');
-    if (interaction.customId === 'cfg_set_giveaway_channel')  return askForChannel(interaction, 'Canal giveaway',     'giveawayChannel');
+    if (interaction.customId === 'cfg_set_giveaway_channel')  return askForChannel(interaction, 'Canal giveaway',         'giveawayChannel');
+    if (interaction.customId === 'cfg_set_gamenotif_channel') return askForChannel(interaction, 'Canal notifs jeux',      'gameNotifChannel');
     if (interaction.customId === 'cfg_set_autorole')          return askForRole(interaction,    'Rôle auto',          'autoRole');
     if (interaction.customId === 'cfg_set_modrole')           return askForRole(interaction,    'Rôle modérateur',    'modRole');
     if (interaction.customId === 'cfg_set_muterole')          return askForRole(interaction,    'Rôle muet',          'mutedRole');
