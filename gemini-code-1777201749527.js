@@ -238,8 +238,51 @@ client.once('ready', async () => {
 
 // ─── ANTI-RAID ───────────────────────────────────────────────────────────────
 
-client.on(Events.GuildMemberAdd, member => {
-    if (raidMode) member.kick("Raidmode actif").catch(console.error);
+client.on(Events.GuildMemberAdd, async member => {
+    // Anti-raid
+    if (raidMode) return member.kick('Raidmode actif').catch(console.error);
+
+    // Auto-rôle
+    if (botConfig.autoRole) {
+        const role = member.guild.roles.cache.get(botConfig.autoRole);
+        if (role) member.roles.add(role).catch(e => console.error('[AutoRole]', e.message));
+    }
+
+    // Message de bienvenue
+    if (botConfig.welcomeChannel) {
+        const channel = member.guild.channels.cache.get(botConfig.welcomeChannel);
+        if (channel) {
+            const msg = botConfig.welcomeMessage.replace('{user}', `<@${member.id}>`);
+            const embed = new EmbedBuilder()
+                .setColor('#5865F2')
+                .setTitle('👋 Nouveau membre !')
+                .setDescription(msg)
+                .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+                .addFields(
+                    { name: '📅 Compte créé le', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:D>`, inline: true },
+                    { name: '👥 Membre n°', value: `${member.guild.memberCount}`, inline: true },
+                )
+                .setTimestamp();
+            channel.send({ embeds: [embed] }).catch(e => console.error('[Welcome]', e.message));
+        } else {
+            console.warn('[Welcome] Canal introuvable :', botConfig.welcomeChannel);
+        }
+    }
+
+    // Log
+    if (botConfig.logChannel) {
+        const logChan = member.guild.channels.cache.get(botConfig.logChannel);
+        if (logChan) {
+            logChan.send({ embeds: [new EmbedBuilder()
+                .setColor('#57F287')
+                .setTitle('📥 Membre rejoint')
+                .setDescription(`<@${member.id}> (**${member.user.tag}**)`)
+                .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+                .addFields({ name: 'ID', value: member.id, inline: true })
+                .setTimestamp()
+            ]}).catch(() => {});
+        }
+    }
 });
 
 // ─── SERVER BOOSTER ──────────────────────────────────────────────────────────
