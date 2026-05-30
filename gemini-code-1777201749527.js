@@ -308,66 +308,69 @@ client.on(Events.MessageCreate, async (message) => {
                 );
 
                 if (isPrivileged || isAdmin) {
-                    // ── Help complet : Co-Fondateurs, Fondateurs, Admins ──
                     return message.reply({ embeds: [new EmbedBuilder()
                         .setTitle('📚 Commandes — Staff')
                         .setColor('#FFD700')
                         .setThumbnail(client.user.displayAvatarURL())
                         .addFields(
-                            { name: '🛠️ Modération', value: '`!kick @user [raison]` — Expulser un membre
-`!ban @user [raison]` — Bannir *(Admin)*
-`!tempban @user <durée> [raison]` — Bannir temporairement *(Admin)*
-`!timeout @user <durée>` — Mettre en sourdine (ex: `10m`)
-`!untimeout @user` — Retirer la sourdine
-`!warn @user [raison]` — Avertir un membre
-`!clear <1-100>` — Supprimer des messages' },
-                            { name: '🛡️ Sécurité', value: '`!lock` — Verrouiller le salon
-`!unlock` — Déverrouiller le salon
-`!raidmode` — Activer/désactiver le mode anti-raid *(Admin)*' },
+                            { name: '🛠️ Modération', value: [
+                                '`!kick @user [raison]` — Expulser un membre',
+                                '`!ban @user [raison]` — Bannir *(Admin)*',
+                                '`!tempban @user <durée> [raison]` — Bannir temporairement *(Admin)*',
+                                '`!timeout @user <durée>` — Mettre en sourdine (ex: `10m`)',
+                                '`!untimeout @user` — Retirer la sourdine',
+                                '`!warn @user [raison]` — Avertir un membre',
+                                '`!clear <1-100>` — Supprimer des messages',
+                            ].join('\n') },
+                            { name: '🛡️ Sécurité', value: [
+                                '`!lock` — Verrouiller le salon',
+                                '`!unlock` — Déverrouiller le salon',
+                                '`!raidmode` — Activer/désactiver le mode anti-raid *(Admin)*',
+                            ].join('\n') },
                             { name: '⚙️ Configuration', value: '`!slowmode <secondes>` — Définir le slowmode du salon' },
-                            { name: '🔍 Informations', value: '`!dlinfo [@user]` — Profil Damnloads d'un membre
-`!id @user` — ID Discord d'un membre' },
-                            { name: '🎉 Giveaway', value: '`!giveaway start <durée> <gagnants> <prix>` — Lancer
-`!giveaway end <messageId>` — Terminer
-`!giveaway reroll <messageId>` — Retirer au sort
-`!giveaway list` — Voir les giveaways actifs
-*(alias : `!gw`)' },
-                            { name: '🌐 Autres', value: '`site` ou `!site` — Accès au site
-`!help` — Afficher cette aide' }
+                            { name: '🔍 Informations', value: [
+                                '`!dlinfo [@user]` — Profil Damnloads d\'un membre',
+                                '`!id @user` — ID Discord d\'un membre',
+                            ].join('\n') },
+                            { name: '🎉 Giveaway', value: [
+                                '`!giveaway start <durée> <gagnants> <prix>` — Lancer',
+                                '`!giveaway end <messageId>` — Terminer',
+                                '`!giveaway reroll <messageId>` — Retirer au sort',
+                                '`!giveaway list` — Voir les giveaways actifs',
+                                '*(alias : `!gw`)*',
+                            ].join('\n') },
+                            { name: '🌐 Autres', value: '`site` ou `!site` — Accès au site\n`!help` — Afficher cette aide' },
                         )
                         .setFooter({ text: 'Staff uniquement • damnloads.com' })
                     ], components: [siteButton] });
                 }
 
                 if (isMembre || isMod) {
-                    // ── Help membre ──
                     return message.reply({ embeds: [new EmbedBuilder()
                         .setTitle('📚 Commandes')
                         .setColor('#5865F2')
                         .setThumbnail(client.user.displayAvatarURL())
                         .addFields(
-                            { name: '🔍 Informations', value: '`!dlinfo [@user]` — Voir ton profil Damnloads (ou celui d'un membre)
-`!id @user` — Afficher l'ID Discord d'un membre' },
-                            { name: '🌐 Site', value: '`site` ou `!site` — Accès au site Damnloads
-`!help` — Afficher cette aide' }
+                            { name: '🔍 Informations', value: [
+                                '`!dlinfo [@user]` — Voir ton profil Damnloads (ou celui d\'un membre)',
+                                '`!id @user` — Afficher l\'ID Discord d\'un membre',
+                            ].join('\n') },
+                            { name: '🌐 Site', value: '`site` ou `!site` — Accès au site Damnloads\n`!help` — Afficher cette aide' },
                         )
                         .setFooter({ text: 'damnloads.com' })
                     ], components: [siteButton] });
                 }
 
-                // ── Help public (non membre) ──
                 return message.reply({ embeds: [new EmbedBuilder()
                     .setTitle('📚 Commandes')
                     .setColor('#2f3136')
                     .setThumbnail(client.user.displayAvatarURL())
                     .addFields(
-                        { name: '🌐 Site', value: '`site` ou `!site` — Accès au site Damnloads
-`!help` — Afficher cette aide' }
+                        { name: '🌐 Site', value: '`site` ou `!site` — Accès au site Damnloads\n`!help` — Afficher cette aide' },
                     )
                     .setFooter({ text: 'damnloads.com' })
                 ], components: [siteButton] });
             }
-
             case 'clear': {
                 if (!isMod) return;
                 const amount = parseInt(args[0]);
@@ -879,7 +882,7 @@ function antispamButtons(cfg) {
         new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('cfg_toggle_antispam')
-                .setLabel(cfg.antiSpam ? '❌ Désactiver l'anti-spam' : '✅ Activer l'anti-spam')
+                .setLabel(cfg.antiSpam ? '❌ Désactiver l\'anti-spam' : '✅ Activer l\'anti-spam')
                 .setStyle(cfg.antiSpam ? 4 : 3),
             new ButtonBuilder().setCustomId('cfg_set_spam_threshold').setLabel('⚙️ Modifier le seuil').setStyle(2),
             new ButtonBuilder().setCustomId('cfg_back').setLabel('↩ Retour').setStyle(4),
