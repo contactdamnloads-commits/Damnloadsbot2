@@ -57,37 +57,82 @@ const MEMBRE_ROLE_ID = '1475145154695397467';
 const GIVEAWAY_EMOJI = '🎉';
 const GIVEAWAY_FILE = './giveaways.json';
 
-const warns = new Map();
-let raidMode = false;
+// ─── PERSISTANCE SUPABASE ────────────────────────────────────────────────────
+// Tables requises (à créer une seule fois dans Supabase) :
+//
+//  CREATE TABLE bot_config (
+//      key   TEXT PRIMARY KEY,
+//      value JSONB NOT NULL
+//  );
+//
+// Cette unique table stocke tout : config, warns, tempbans, state.
+// Chaque "clé" est une entrée : 'config', 'warns', 'tempbans', 'state'
 
-// ─── CONFIG SERVEUR (persistée dans config.json) ──────────────────────────────
-const CONFIG_FILE = './bot-config.json';
-
-function loadConfig() {
+async function dbGet(key, fallback = null) {
     try {
-        if (fs.existsSync(CONFIG_FILE)) return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-    } catch (e) { console.error('[Config] Erreur lecture config:', e.message); }
-    return {
-        logChannel: null,
-        welcomeChannel: null,
+        const { data, error } = await supabase
+            .from('bot_config')
+            .select('value')
+            .eq('key', key)
+            .single();
+        if (error || !data) return fallback;
+        return data.value;
+    } catch (e) {
+        console.error(`[DB] Erreur lecture '${key}':`, e.message);
+        return fallback;
+    }
+}
+
+async function dbSet(key, value) {
+    try {
+        const { error } = await supabase
+            .from('bot_config')
+            .upsert({ key, value }, { onConflict: 'key' });
+        if (error) console.error(`[DB] Erreur sauvegarde '${key}':`, error.message);
+    } catch (e) {
+        console.error(`[DB] Erreur sauvegarde '${key}':`, e.message);
+    }
+}
+
+// Wrappers spécialisés
+async function loadConfig() {
+    const data = await dbGet('config');
+    return data ?? {
+        logChannel: null, welcomeChannel: null,
         welcomeMessage: 'Bienvenue sur le serveur, {user} ! 🎉',
-        autoRole: null,
-        modRole: null,
-        mutedRole: null,
-        antiSpam: false,
-        antiSpamThreshold: 5,
-        antiSpamInterval: 3,
-        giveawayChannel: null,
-        prefix: '!',
+        autoRole: null, modRole: null, mutedRole: null,
+        antiSpam: false, antiSpamThreshold: 5, antiSpamInterval: 3,
+        giveawayChannel: null, prefix: '!',
     };
 }
+async function saveConfig(cfg)    { await dbSet('config', cfg); }
 
-function saveConfig(cfg) {
-    try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2)); }
-    catch (e) { console.error('[Config] Erreur sauvegarde config:', e.message); }
+async function loadWarnsDB() {
+    const data = await dbGet('warns', {});
+    return new Map(Object.entries(data));
 }
+async function saveWarns(w)       { await dbSet('warns', Object.fromEntries(w)); }
 
-let botConfig = loadConfig();
+async function loadTempbans()     { return await dbGet('tempbans', {}); }
+async function saveTempbans(tb)   { await dbSet('tempbans', tb); }
+
+async function loadState()        { return await dbGet('state', { raidMode: false }); }
+async function saveState(s)       { await dbSet('state', s); }
+
+// Chargement synchrone remplacé par init async (appelé dans ready)
+let botConfig = {
+    logChannel: null, welcomeChannel: null,
+    welcomeMessage: 'Bienvenue sur le serveur, {user} ! 🎉',
+    autoRole: null, modRole: null, mutedRole: null,
+    antiSpam: false, antiSpamThreshold: 5, antiSpamInterval: 3,
+    giveawayChannel: null, prefix: '!',
+};
+const warns    = new Map();
+let tempbans   = {};
+let raidMode   = false;
+
+// ─── CONFIG SERVEUR (persistée dans config.json) ──────────────────────────────
+// (config, warns, tempbans, state sont maintenant chargés depuis Supabase dans ready())
 
 require('./role-sync')(client);
 require('./recent-games')(client, supabase);
@@ -196,12 +241,56 @@ function scheduleGiveaway(messageId) {
 client.once('ready', async () => {
     console.log(`✅ ${client.user.tag} est prêt !`);
 
-    // Restaure tous les giveaways actifs sauvegardés
+    // ── Chargement depuis Supabase ──────────────────────────────────────────────
+    try {
+        const [cfgData, warnsData, tempbansData, stateData] = await Promise.all([
+            loadConfig(),
+            loadWarnsDB(),
+            loadTempbans(),
+            loadState(),
+        ]);
+        Object.assign(botConfig, cfgData);
+        for (const [k, v] of warnsData) warns.set(k, v);
+        Object.assign(tempbans, tempbansData);
+        raidMode = stateData.raidMode ?? false;
+        console.log(`💾 Supabase chargé | RaidMode: ${raidMode} | Warns: ${warns.size} users | Tempbans: ${Object.keys(tempbans).length}`);
+    } catch (e) {
+        console.error('[Boot] Erreur chargement Supabase:', e.message);
+    }
+
+    // ── Restaure les giveaways actifs ──────────────────────────────────────────
     let restored = 0;
     for (const [messageId, gw] of giveaways) {
         if (!gw.ended) { scheduleGiveaway(messageId); restored++; }
     }
     if (restored > 0) console.log(`🔄 ${restored} giveaway(s) restauré(s).`);
+
+    // ── Restaure les tempbans en attente ────────────────────────────────────
+    const now = Date.now();
+    let tbRestored = 0;
+    for (const [userId, tb] of Object.entries(tempbans)) {
+        const remaining = tb.unbanAt - now;
+        const guild = client.guilds.cache.get(tb.guildId);
+        if (!guild) continue;
+        if (remaining <= 0) {
+            // Déjà expiré pendant le downtime → unban immédiat
+            guild.members.unban(userId, 'Tempban expiré (rattrapage boot)').catch(() => {});
+            delete tempbans[userId];
+        } else {
+            // Pas encore expiré → replanifier
+            setTimeout(async () => {
+                await guild.members.unban(userId, 'Tempban expiré').catch(() => {});
+                delete tempbans[userId];
+                saveTempbans(tempbans);
+            }, remaining);
+            tbRestored++;
+        }
+    }
+    saveTempbans(tempbans);
+    if (tbRestored > 0) console.log(`⏳ ${tbRestored} tempban(s) restauré(s).`);
+
+    // ── Résumé persistance ──────────────────────────────────────────────────
+    console.log(`💾 Config chargée | RaidMode: ${raidMode} | Warns: ${warns.size} users | Tempbans actifs: ${tbRestored}`);
 
     // ── Un seul fetch des membres, partagé par toutes les syncs ──────────────
     const guild = client.guilds.cache.get(SERVER_ID);
@@ -446,9 +535,19 @@ client.on(Events.MessageCreate, async (message) => {
                 const tbMem = message.mentions.members.first();
                 const time = args[1];
                 if (!tbMem || !time) return message.reply("Usage: !tempban @user 1h");
-                await tbMem.ban({ reason: `Tempban: ${args.slice(2).join(" ")}` });
-                message.reply(`⏳ **${tbMem.user.tag}** banni pour ${time}.`);
-                setTimeout(() => message.guild.members.unban(tbMem.id).catch(() => {}), ms(time));
+                const tbReason = args.slice(2).join(' ') || 'Aucune raison';
+                const tbDuration = ms(time);
+                if (!tbDuration) return message.reply('❌ Durée invalide. Exemple : `1h`, `30m`, `2d`');
+                await tbMem.ban({ reason: `Tempban (${time}): ${tbReason}` });
+                const tbUnbanAt = Date.now() + tbDuration;
+                tempbans[tbMem.id] = { guildId: message.guild.id, unbanAt: tbUnbanAt, reason: tbReason };
+                saveTempbans(tempbans);
+                message.reply(`⏳ **${tbMem.user.tag}** banni pour **${time}**.`);
+                setTimeout(async () => {
+                    await message.guild.members.unban(tbMem.id, 'Tempban expiré').catch(() => {});
+                    delete tempbans[tbMem.id];
+                    saveTempbans(tempbans);
+                }, tbDuration);
                 break;
             }
 
@@ -474,15 +573,81 @@ client.on(Events.MessageCreate, async (message) => {
                 const wUser = message.mentions.users.first();
                 if (!wUser) return message.reply("Mentionne l'utilisateur.");
                 if (!warns.has(wUser.id)) warns.set(wUser.id, []);
-                warns.get(wUser.id).push(args.slice(1).join(" ") || "Raison non spécifiée");
+                warns.get(wUser.id).push({ reason: args.slice(1).join(' ') || 'Raison non spécifiée', date: new Date().toISOString(), by: message.author.tag });
+                saveWarns(warns);
                 message.reply(`⚠️ **${wUser.tag}** a été warn. (Total: ${warns.get(wUser.id).length})`);
+                break;
+            }
+
+            case 'warns': {
+                if (!isMod) return;
+                const wTarget = message.mentions.users.first();
+                if (!wTarget) return message.reply('⚠️ Mentionne un utilisateur. Ex: `!warns @user`');
+                const userWarns = warns.get(wTarget.id) ?? [];
+                if (!userWarns.length) return message.reply(`✅ **${wTarget.tag}** n\'a aucun warn.`);
+                const list = userWarns.map((w, i) => {
+                    const reason = typeof w === 'string' ? w : w.reason;
+                    const by     = typeof w === 'string' ? '?' : w.by;
+                    const date   = typeof w === 'string' ? '' : ` — <t:${Math.floor(new Date(w.date).getTime()/1000)}:d>`;
+                    return `**${i+1}.** ${reason} *(par ${by}${date})*`;
+                }).join('\n');
+                const warnEmbed = new EmbedBuilder()
+                    .setTitle(`⚠️ Warns de ${wTarget.tag}`)
+                    .setColor('#FFA500')
+                    .setDescription(list)
+                    .setFooter({ text: `Total : ${userWarns.length} warn(s)` })
+                    .setThumbnail(wTarget.displayAvatarURL());
+                message.channel.send({ embeds: [warnEmbed] });
+                break;
+            }
+
+            case 'clearwarns': {
+                if (!isAdmin) return;
+                const cwTarget = message.mentions.users.first();
+                if (!cwTarget) return message.reply('⚠️ Mentionne un utilisateur.');
+                warns.delete(cwTarget.id);
+                saveWarns(warns);
+                message.reply(`✅ Warns de **${cwTarget.tag}** effacés.`);
+                break;
+            }
+
+            case 'warns': {
+                if (!isMod) return;
+                const wTarget = message.mentions.users.first();
+                if (!wTarget) return message.reply('⚠️ Mentionne un utilisateur. Ex: `!warns @user`');
+                const userWarns = warns.get(wTarget.id) ?? [];
+                if (!userWarns.length) return message.reply(`✅ **${wTarget.tag}** n'a aucun warn.`);
+                const list = userWarns.map((w, i) => {
+                    const reason = typeof w === 'string' ? w : w.reason;
+                    const by     = typeof w === 'string' ? '?' : w.by;
+                    const date   = typeof w === 'string' ? '' : ` — <t:${Math.floor(new Date(w.date).getTime()/1000)}:d>`;
+                    return `**${i+1}.** ${reason} *(par ${by}${date})*`;
+                }).join('\n');
+                const warnEmbed = new EmbedBuilder()
+                    .setTitle(`⚠️ Warns de ${wTarget.tag}`)
+                    .setColor('#FFA500')
+                    .setDescription(list)
+                    .setFooter({ text: `Total : ${userWarns.length} warn(s)` })
+                    .setThumbnail(wTarget.displayAvatarURL());
+                message.channel.send({ embeds: [warnEmbed] });
+                break;
+            }
+
+            case 'clearwarns': {
+                if (!isAdmin) return;
+                const cwTarget = message.mentions.users.first();
+                if (!cwTarget) return message.reply('⚠️ Mentionne un utilisateur.');
+                warns.delete(cwTarget.id);
+                saveWarns(warns);
+                message.reply(`✅ Warns de **${cwTarget.tag}** effacés.`);
                 break;
             }
 
             case 'raidmode': {
                 if (!isAdmin) return;
                 raidMode = !raidMode;
-                message.reply(raidMode ? "🚨 **RAIDMODE ACTIVÉ**" : "✅ **RAIDMODE DÉSACTIVÉ**");
+                saveState({ raidMode });
+                message.reply(raidMode ? '🚨 **RAIDMODE ACTIVÉ**' : '✅ **RAIDMODE DÉSACTIVÉ**');
                 break;
             }
 
@@ -591,6 +756,63 @@ client.on(Events.MessageCreate, async (message) => {
                     .setTimestamp();
 
                 message.channel.send({ embeds: [idEmbed] });
+                break;
+            }
+
+            case 'userinfo': {
+                const target = message.mentions.members.first() || message.member;
+                const user = target.user;
+
+                const roles = target.roles.cache
+                    .filter(r => r.id !== message.guild.id)
+                    .sort((a, b) => b.position - a.position)
+                    .map(r => `<@&${r.id}>`)
+                    .slice(0, 10);
+
+                const rolesDisplay = roles.length ? roles.join(' ') : '`Aucun rôle`';
+
+                const flags = user.flags?.toArray() ?? [];
+                const badgeMap = {
+                    Staff:                  '👨‍💼 Staff Discord',
+                    Partner:                '🤝 Partenaire',
+                    Hypesquad:              '🏠 HypeSquad Events',
+                    BugHunterLevel1:        '🐛 Bug Hunter',
+                    BugHunterLevel2:        '🐛 Bug Hunter Gold',
+                    HypeSquadOnlineHouse1:  '🏠 Bravery',
+                    HypeSquadOnlineHouse2:  '🏠 Brilliance',
+                    HypeSquadOnlineHouse3:  '🏠 Balance',
+                    PremiumEarlySupporter:  '💎 Early Supporter',
+                    VerifiedDeveloper:      '🤖 Bot Developer',
+                    ActiveDeveloper:        '⚡ Active Developer',
+                    CertifiedModerator:     '🛡️ Certified Moderator',
+                };
+                const badges = flags.map(f => badgeMap[f]).filter(Boolean);
+
+                const statusMap = { online: '🟢 En ligne', idle: '🟡 Absent', dnd: '🔴 Ne pas déranger', offline: '⚫ Hors ligne' };
+                const presence = message.guild.presences.cache.get(user.id);
+                const status = statusMap[presence?.status ?? 'offline'];
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`👤 ${user.tag}`)
+                    .setThumbnail(user.displayAvatarURL({ dynamic: true, size: 256 }))
+                    .setColor(target.displayHexColor !== '#000000' ? target.displayHexColor : '#5865F2')
+                    .addFields(
+                        { name: '🪪 ID',           value: `\`${user.id}\``,                                            inline: true },
+                        { name: '📛 Pseudo serveur', value: target.nickname ?? user.username,                          inline: true },
+                        { name: '🌐 Statut',        value: status,                                                     inline: true },
+                        { name: '📅 Compte créé',   value: `<t:${Math.floor(user.createdTimestamp / 1000)}:D>`,        inline: true },
+                        { name: '📥 A rejoint le',  value: `<t:${Math.floor(target.joinedTimestamp / 1000)}:D>`,       inline: true },
+                        { name: '🤖 Bot',           value: user.bot ? 'Oui' : 'Non',                                  inline: true },
+                        { name: `🎭 Rôles (${roles.length})`, value: rolesDisplay,                                     inline: false },
+                    );
+
+                if (badges.length) embed.addFields({ name: '🏅 Badges', value: badges.join('\n'), inline: false });
+
+                const avatar = user.displayAvatarURL({ dynamic: true, size: 512 });
+                embed.addFields({ name: '🖼️ Avatar', value: `[Voir en grand](${avatar})`, inline: false });
+                embed.setImage(avatar).setTimestamp();
+
+                message.channel.send({ embeds: [embed] });
                 break;
             }
 
