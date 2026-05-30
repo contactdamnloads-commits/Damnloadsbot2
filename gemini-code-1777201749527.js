@@ -374,6 +374,67 @@ client.on(Events.GuildMemberAdd, async member => {
     }
 });
 
+// ─── MEMBRE QUITTE ───────────────────────────────────────────────────────────
+
+client.on(Events.GuildMemberRemove, async member => {
+    if (!botConfig.logChannel) return;
+    const logChan = member.guild.channels.cache.get(botConfig.logChannel);
+    if (!logChan) return;
+
+    // Récupère les rôles (hors @everyone)
+    const roles = member.roles.cache
+        .filter(r => r.id !== member.guild.id)
+        .sort((a, b) => b.position - a.position)
+        .map(r => `<@&${r.id}>`);
+    const rolesDisplay = roles.length ? roles.slice(0, 10).join(' ') : '`Aucun`';
+
+    // Cherche si c'est un kick ou un ban récent via l'audit log
+    let reason = null;
+    let action = '📤 Membre parti';
+    let actionColor = '#ED4245'; // rouge
+    try {
+        await new Promise(r => setTimeout(r, 1000)); // petit délai pour que l'audit log soit dispo
+        const auditLogs = await member.guild.fetchAuditLogs({ limit: 5, type: 20 }); // 20 = MEMBER_KICK
+        const kickEntry = auditLogs.entries.find(e =>
+            e.target.id === member.id && (Date.now() - e.createdTimestamp) < 5000
+        );
+        if (kickEntry) {
+            action = '👢 Membre expulsé (kick)';
+            actionColor = '#FFA500';
+            reason = kickEntry.reason || 'Aucune raison';
+        }
+    } catch {}
+
+    try {
+        const auditLogs = await member.guild.fetchAuditLogs({ limit: 5, type: 22 }); // 22 = MEMBER_BAN_ADD
+        const banEntry = auditLogs.entries.find(e =>
+            e.target.id === member.id && (Date.now() - e.createdTimestamp) < 5000
+        );
+        if (banEntry) {
+            action = '🔨 Membre banni';
+            actionColor = '#ED4245';
+            reason = banEntry.reason || 'Aucune raison';
+        }
+    } catch {}
+
+    const embed = new EmbedBuilder()
+        .setColor(actionColor)
+        .setTitle(action)
+        .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+        .addFields(
+            { name: '👤 Utilisateur',   value: `<@${member.id}> (${member.user.tag})`,                              inline: false },
+            { name: '🪪 ID',            value: `\`${member.id}\``,                                                   inline: true  },
+            { name: '📅 Avait rejoint', value: member.joinedTimestamp ? `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>` : 'Inconnu', inline: true },
+            { name: `🎭 Rôles (${roles.length})`, value: rolesDisplay,                                               inline: false },
+        );
+
+    if (reason) embed.addFields({ name: '📋 Raison', value: reason, inline: false });
+
+    embed.setTimestamp().setFooter({ text: `Membres restants : ${member.guild.memberCount}` });
+
+    logChan.send({ embeds: [embed] }).catch(e => console.error('[Leave Log]', e.message));
+});
+
 // ─── SERVER BOOSTER ──────────────────────────────────────────────────────────
 
 async function setBoosterStatus(discordId, isBooster) {
