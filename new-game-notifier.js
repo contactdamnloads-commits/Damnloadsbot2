@@ -18,7 +18,8 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const notifierState = require('./notifier-state');
 
 // ─── Config ─────────────────────────────────────────────────────────────────
-const CHANNEL_ID    = process.env.NEW_GAME_CHANNEL_ID || '1502840727988863047';
+// CHANNEL_ID est résolu dynamiquement via getChannelId() pour supporter !config
+let _getChannelId = () => process.env.NEW_GAME_CHANNEL_ID || '1502840727988863047';
 const SITE_URL      = (process.env.SITE_URL || 'https://damnloads.com').replace(/\/$/, '');
 const POLL_MS       = parseInt(process.env.POLL_INTERVAL_GAMES) || 2 * 60 * 1000; // 2 min
 
@@ -155,8 +156,9 @@ async function fetchNewGames(supabase, lastSeenId) {
 
 // ─── Boucle de vérification ───────────────────────────────────────────────────
 async function checkAndPost(client, supabase, state, isCatchup = false) {
+    const CHANNEL_ID = _getChannelId();
     if (!CHANNEL_ID) {
-        console.warn('[GameNotifier] ⚠️ NEW_GAME_CHANNEL_ID manquant dans .env');
+        console.warn('[GameNotifier] ⚠️ Canal non défini (NEW_GAME_CHANNEL_ID ou !config)');
         return;
     }
 
@@ -275,7 +277,11 @@ async function handlePostAllGames(message, supabase) {
     message.reply(`✅ Terminé ! **${games.length}** jeux postés dans <#${TARGET_CHANNEL_ID}>.`);
 }
 
-module.exports = function setupGameNotifier(client, supabase) {
+module.exports = function setupGameNotifier(client, supabase, getChannelId) {
+    // Si un getter dynamique est fourni (depuis botConfig), on l'utilise
+    if (typeof getChannelId === 'function') _getChannelId = getChannelId;
+
+    const CHANNEL_ID = _getChannelId();
     if (!CHANNEL_ID) {
         console.warn('[GameNotifier] ⚠️ NEW_GAME_CHANNEL_ID non défini — module désactivé.');
         return;
