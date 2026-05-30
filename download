@@ -1,0 +1,6 @@
+node_modules/
+.env
+notifier-state.json
+giveaways.json
+download_logs.json
+*.log

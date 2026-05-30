@@ -1,0 +1,20 @@
+{
+  "name": "damnloads-bot",
+  "version": "1.0.0",
+  "description": "Bot Discord DamnLoads",
+  "main": "gemini-code-1777201749527.js",
+  "scripts": {
+    "start": "node gemini-code-1777201749527.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.105.1",
+    "cors": "^2.8.6",
+    "discord.js": "^14.26.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "ms": "^2.1.3"
+  }
+}
