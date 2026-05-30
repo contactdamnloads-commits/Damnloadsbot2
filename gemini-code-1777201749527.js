@@ -2,7 +2,9 @@ require('dotenv').config();
 
 const { 
     Client, GatewayIntentBits, ActivityType, ActionRowBuilder, 
-    ButtonBuilder, ButtonStyle, Events, PermissionsBitField, EmbedBuilder 
+    ButtonBuilder, ButtonStyle, Events, PermissionsBitField, EmbedBuilder,
+    StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
+    ChannelSelectMenuBuilder, RoleSelectMenuBuilder, ChannelType
 } = require('discord.js');
 const ms = require('ms');
 const { createClient } = require('@supabase/supabase-js');
@@ -43,12 +45,49 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
-const SITE_URL = 'https://damnloads-vault.vercel.app/';
+const SITE_URL = 'https://damnloads.com';
+
+// ─── IDs PRIVILÉGIÉS ─────────────────────────────────────────────────────────
+const PRIVILEGED_IDS = new Set([
+    '1475147452540653578',  // Co-Fondateur
+    '1491776456299118745',  // Fondateur
+    '1475149005611733083',  // Admin
+]);
+const MEMBRE_ROLE_ID = '1475145154695397467';
 const GIVEAWAY_EMOJI = '🎉';
 const GIVEAWAY_FILE = './giveaways.json';
 
 const warns = new Map();
 let raidMode = false;
+
+// ─── CONFIG SERVEUR (persistée dans config.json) ──────────────────────────────
+const CONFIG_FILE = './bot-config.json';
+
+function loadConfig() {
+    try {
+        if (fs.existsSync(CONFIG_FILE)) return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    } catch (e) { console.error('[Config] Erreur lecture config:', e.message); }
+    return {
+        logChannel: null,
+        welcomeChannel: null,
+        welcomeMessage: 'Bienvenue sur le serveur, {user} ! 🎉',
+        autoRole: null,
+        modRole: null,
+        mutedRole: null,
+        antiSpam: false,
+        antiSpamThreshold: 5,
+        antiSpamInterval: 3,
+        giveawayChannel: null,
+        prefix: '!',
+    };
+}
+
+function saveConfig(cfg) {
+    try { fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2)); }
+    catch (e) { console.error('[Config] Erreur sauvegarde config:', e.message); }
+}
+
+let botConfig = loadConfig();
 
 require('./role-sync')(client);
 require('./recent-games')(client, supabase);
@@ -243,11 +282,11 @@ async function syncAllBoosters() {
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    if (message.channel.id === SITE_CHANNEL_ID && message.content.toLowerCase() === 'site') {
+    if (message.content.toLowerCase() === 'site' || message.content.toLowerCase() === '!site') {
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setLabel('Lien du Site').setURL(SITE_URL).setStyle(ButtonStyle.Link)
+            new ButtonBuilder().setLabel('🌐 Accéder au site').setURL(SITE_URL).setStyle(ButtonStyle.Link)
         );
-        return message.reply({ content: "Voici l'accès au site :", components: [row] });
+        return message.reply({ content: "Voici l'accès au site Damnloads :", components: [row] });
     }
 
     if (!message.content.startsWith(PREFIX)) return;
@@ -261,20 +300,72 @@ client.on(Events.MessageCreate, async (message) => {
         switch (command) {
 
             case 'help': {
-                message.reply({ embeds: [new EmbedBuilder()
-                    .setTitle('📚 Liste des Commandes').setColor('#00ff00')
+                const isPrivileged = PRIVILEGED_IDS.has(message.author.id);
+                const isMembre = message.member.roles.cache.has(MEMBRE_ROLE_ID);
+
+                const siteButton = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setLabel('🌐 Accéder au site').setURL(SITE_URL).setStyle(ButtonStyle.Link)
+                );
+
+                if (isPrivileged || isAdmin) {
+                    // ── Help complet : Co-Fondateurs, Fondateurs, Admins ──
+                    return message.reply({ embeds: [new EmbedBuilder()
+                        .setTitle('📚 Commandes — Staff')
+                        .setColor('#FFD700')
+                        .setThumbnail(client.user.displayAvatarURL())
+                        .addFields(
+                            { name: '🛠️ Modération', value: '`!kick @user [raison]` — Expulser un membre
+`!ban @user [raison]` — Bannir *(Admin)*
+`!tempban @user <durée> [raison]` — Bannir temporairement *(Admin)*
+`!timeout @user <durée>` — Mettre en sourdine (ex: `10m`)
+`!untimeout @user` — Retirer la sourdine
+`!warn @user [raison]` — Avertir un membre
+`!clear <1-100>` — Supprimer des messages' },
+                            { name: '🛡️ Sécurité', value: '`!lock` — Verrouiller le salon
+`!unlock` — Déverrouiller le salon
+`!raidmode` — Activer/désactiver le mode anti-raid *(Admin)*' },
+                            { name: '⚙️ Configuration', value: '`!slowmode <secondes>` — Définir le slowmode du salon' },
+                            { name: '🔍 Informations', value: '`!dlinfo [@user]` — Profil Damnloads d'un membre
+`!id @user` — ID Discord d'un membre' },
+                            { name: '🎉 Giveaway', value: '`!giveaway start <durée> <gagnants> <prix>` — Lancer
+`!giveaway end <messageId>` — Terminer
+`!giveaway reroll <messageId>` — Retirer au sort
+`!giveaway list` — Voir les giveaways actifs
+*(alias : `!gw`)' },
+                            { name: '🌐 Autres', value: '`site` ou `!site` — Accès au site
+`!help` — Afficher cette aide' }
+                        )
+                        .setFooter({ text: 'Staff uniquement • damnloads.com' })
+                    ], components: [siteButton] });
+                }
+
+                if (isMembre || isMod) {
+                    // ── Help membre ──
+                    return message.reply({ embeds: [new EmbedBuilder()
+                        .setTitle('📚 Commandes')
+                        .setColor('#5865F2')
+                        .setThumbnail(client.user.displayAvatarURL())
+                        .addFields(
+                            { name: '🔍 Informations', value: '`!dlinfo [@user]` — Voir ton profil Damnloads (ou celui d'un membre)
+`!id @user` — Afficher l'ID Discord d'un membre' },
+                            { name: '🌐 Site', value: '`site` ou `!site` — Accès au site Damnloads
+`!help` — Afficher cette aide' }
+                        )
+                        .setFooter({ text: 'damnloads.com' })
+                    ], components: [siteButton] });
+                }
+
+                // ── Help public (non membre) ──
+                return message.reply({ embeds: [new EmbedBuilder()
+                    .setTitle('📚 Commandes')
+                    .setColor('#2f3136')
                     .setThumbnail(client.user.displayAvatarURL())
                     .addFields(
-                        { name: '🛠️ Modération', value: '`!kick @user [raison]` — Expulser un membre\n`!ban @user [raison]` — Bannir un membre *(Admin)*\n`!tempban @user <durée> [raison]` — Bannir temporairement *(Admin)*\n`!timeout @user <durée>` — Mettre en sourdine (ex: `10m`)\n`!untimeout @user` — Retirer la mise en sourdine\n`!warn @user [raison]` — Avertir un membre\n`!clear <1-100>` — Supprimer des messages' },
-                        { name: '🛡️ Sécurité', value: '`!lock` — Verrouiller le salon\n`!unlock` — Déverrouiller le salon\n`!raidmode` — Activer/désactiver le mode raid *(Admin)*' },
-                        { name: '⚙️ Configuration', value: '`!slowmode <secondes>` — Définir le slowmode du salon' },
-                        { name: '🔍 Informations', value: '`!dlinfo [@user]` — Afficher le profil Damnloads d\'un membre\n`!id @user` — Afficher l\'ID Discord d\'un membre' },
-                        { name: '🎉 Giveaway', value: '`!giveaway start <durée> <gagnants> <prix>` — Lancer un giveaway\n`!giveaway end <messageId>` — Terminer un giveaway\n`!giveaway reroll <messageId>` — Retirer au sort\n`!giveaway list` — Voir les giveaways en cours\n*(alias : `!gw`)' },
-                        { name: '🌐 Autres', value: '`site` (dans le canal dédié) — Accès au site\n`!help` — Afficher cette aide' }
+                        { name: '🌐 Site', value: '`site` ou `!site` — Accès au site Damnloads
+`!help` — Afficher cette aide' }
                     )
-                    .setFooter({ text: 'Prefix actuel : ! • (Mod) = Modérateur requis • (Admin) = Administrateur requis' })
-                ]});
-                break;
+                    .setFooter({ text: 'damnloads.com' })
+                ], components: [siteButton] });
             }
 
             case 'clear': {
@@ -455,6 +546,12 @@ client.on(Events.MessageCreate, async (message) => {
 
                 message.channel.send({ embeds: [idEmbed] });
                 break;
+            }
+
+            case 'config': {
+                if (!PRIVILEGED_IDS.has(message.author.id) && !isAdmin)
+                    return message.reply('❌ Réservé aux admins et fondateurs.');
+                return sendConfigMenu(message.channel, botConfig, client);
             }
 
             case 'giveaway':
@@ -684,6 +781,337 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
     // Vérification du rôle Soutien (nickname ou note de serveur modifiés)
     await checkMemberForSoutienRole(newMember);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── SYSTÈME !CONFIG ────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
+function cfgVal(id) { return id ? `<#${id}>` : '`Non défini`'; }
+function cfgRole(id) { return id ? `<@&${id}>` : '`Non défini`'; }
+function cfgBool(v)  { return v ? '✅ Activé' : '❌ Désactivé'; }
+
+function buildConfigEmbed(cfg, client) {
+    return new EmbedBuilder()
+        .setTitle('⚙️  Configuration du Bot')
+        .setColor('#5865F2')
+        .setThumbnail(client.user.displayAvatarURL())
+        .addFields(
+            { name: '📋 Général', value:
+                `**Préfixe :** \`${cfg.prefix}\`
+` +
+                `**Canal logs :** ${cfgVal(cfg.logChannel)}
+` +
+                `**Canal bienvenue :** ${cfgVal(cfg.welcomeChannel)}
+` +
+                `**Message bienvenue :** \`${cfg.welcomeMessage}\``,
+              inline: false },
+            { name: '👥 Rôles', value:
+                `**Rôle auto (nouveau membre) :** ${cfgRole(cfg.autoRole)}
+` +
+                `**Rôle modérateur :** ${cfgRole(cfg.modRole)}
+` +
+                `**Rôle muet :** ${cfgRole(cfg.mutedRole)}`,
+              inline: false },
+            { name: '🛡️ Anti-Spam', value:
+                `**Statut :** ${cfgBool(cfg.antiSpam)}
+` +
+                `**Seuil :** \`${cfg.antiSpamThreshold}\` messages en \`${cfg.antiSpamInterval}s\``,
+              inline: false },
+            { name: '🎉 Giveaway', value:
+                `**Canal giveaway :** ${cfgVal(cfg.giveawayChannel)}`,
+              inline: false },
+        )
+        .setFooter({ text: 'Utilise le menu ci-dessous pour modifier une section' })
+        .setTimestamp();
+}
+
+function buildMainMenu() {
+    return new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId('cfg_section')
+            .setPlaceholder('📂 Choisir une section à configurer...')
+            .addOptions([
+                { label: '📋 Général',        description: 'Préfixe, logs, bienvenue',          value: 'general',   emoji: '📋' },
+                { label: '👥 Rôles',           description: 'Auto-rôle, modérateur, muet',       value: 'roles',     emoji: '👥' },
+                { label: '🛡️ Anti-Spam',       description: 'Seuil et intervalle anti-spam',     value: 'antispam',  emoji: '🛡️' },
+                { label: '🎉 Giveaway',        description: 'Canal des giveaways',               value: 'giveaway',  emoji: '🎉' },
+                { label: '🔄 Réinitialiser',   description: 'Remettre la config par défaut',     value: 'reset',     emoji: '🔄' },
+            ])
+    );
+}
+
+async function sendConfigMenu(channel, cfg, client) {
+    return channel.send({
+        embeds: [buildConfigEmbed(cfg, client)],
+        components: [buildMainMenu()],
+    });
+}
+
+// ─── Sections buttons ────────────────────────────────────────────────────────
+
+function generalButtons(cfg) {
+    return [
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('cfg_set_prefix').setLabel('✏️ Changer le préfixe').setStyle(2),
+            new ButtonBuilder().setCustomId('cfg_set_welcome_msg').setLabel('💬 Message bienvenue').setStyle(2),
+        ),
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('cfg_set_log_channel').setLabel('📋 Canal de logs').setStyle(1),
+            new ButtonBuilder().setCustomId('cfg_set_welcome_channel').setLabel('👋 Canal bienvenue').setStyle(1),
+            new ButtonBuilder().setCustomId('cfg_back').setLabel('↩ Retour').setStyle(4),
+        ),
+    ];
+}
+
+function rolesButtons() {
+    return [
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('cfg_set_autorole').setLabel('🤖 Rôle auto').setStyle(2),
+            new ButtonBuilder().setCustomId('cfg_set_modrole').setLabel('🛠️ Rôle modérateur').setStyle(2),
+            new ButtonBuilder().setCustomId('cfg_set_muterole').setLabel('🔇 Rôle muet').setStyle(2),
+            new ButtonBuilder().setCustomId('cfg_back').setLabel('↩ Retour').setStyle(4),
+        ),
+    ];
+}
+
+function antispamButtons(cfg) {
+    return [
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('cfg_toggle_antispam')
+                .setLabel(cfg.antiSpam ? '❌ Désactiver l'anti-spam' : '✅ Activer l'anti-spam')
+                .setStyle(cfg.antiSpam ? 4 : 3),
+            new ButtonBuilder().setCustomId('cfg_set_spam_threshold').setLabel('⚙️ Modifier le seuil').setStyle(2),
+            new ButtonBuilder().setCustomId('cfg_back').setLabel('↩ Retour').setStyle(4),
+        ),
+    ];
+}
+
+function giveawayButtons() {
+    return [
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('cfg_set_giveaway_channel').setLabel('🎉 Canal giveaway').setStyle(1),
+            new ButtonBuilder().setCustomId('cfg_back').setLabel('↩ Retour').setStyle(4),
+        ),
+    ];
+}
+
+// ─── Helper: demander un channel via message temporaire ─────────────────────
+
+async function askForChannel(interaction, label, cfgKey) {
+    await interaction.reply({ content: `📌 **${label}** — Mentionne le salon souhaité (ex: <#123456>) ou tape son ID. Tu as 30s.`, ephemeral: true });
+    const filter = m => m.author.id === interaction.user.id;
+    try {
+        const collected = await interaction.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
+        const msg = collected.first();
+        const channelId = msg.mentions.channels.first()?.id || msg.content.trim().replace(/[^0-9]/g, '');
+        const chan = interaction.guild.channels.cache.get(channelId);
+        if (!chan) return interaction.followUp({ content: '❌ Salon introuvable.', ephemeral: true });
+        botConfig[cfgKey] = chan.id;
+        saveConfig(botConfig);
+        msg.delete().catch(() => {});
+        return interaction.followUp({ content: `✅ **${label}** défini sur ${chan}.`, ephemeral: true });
+    } catch {
+        return interaction.followUp({ content: '⏱️ Temps écoulé.', ephemeral: true });
+    }
+}
+
+async function askForRole(interaction, label, cfgKey) {
+    await interaction.reply({ content: `🎭 **${label}** — Mentionne le rôle (ex: <@&123456>) ou tape son ID. Tu as 30s.`, ephemeral: true });
+    const filter = m => m.author.id === interaction.user.id;
+    try {
+        const collected = await interaction.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
+        const msg = collected.first();
+        const roleId = msg.mentions.roles.first()?.id || msg.content.trim().replace(/[^0-9]/g, '');
+        const role = interaction.guild.roles.cache.get(roleId);
+        if (!role) return interaction.followUp({ content: '❌ Rôle introuvable.', ephemeral: true });
+        botConfig[cfgKey] = role.id;
+        saveConfig(botConfig);
+        msg.delete().catch(() => {});
+        return interaction.followUp({ content: `✅ **${label}** défini sur ${role}.`, ephemeral: true });
+    } catch {
+        return interaction.followUp({ content: '⏱️ Temps écoulé.', ephemeral: true });
+    }
+}
+
+// ─── Interaction handler ─────────────────────────────────────────────────────
+
+client.on(Events.InteractionCreate, async (interaction) => {
+    // Vérif permissions
+    const isPriv  = PRIVILEGED_IDS.has(interaction.user.id);
+    const isAdm   = interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
+    if (!isPriv && !isAdm) {
+        if (interaction.isRepliable()) return interaction.reply({ content: '❌ Accès refusé.', ephemeral: true });
+        return;
+    }
+
+    // ── Select menu principal ──
+    if (interaction.isStringSelectMenu() && interaction.customId === 'cfg_section') {
+        const section = interaction.values[0];
+
+        if (section === 'reset') {
+            botConfig = {
+                logChannel: null, welcomeChannel: null,
+                welcomeMessage: 'Bienvenue sur le serveur, {user} ! 🎉',
+                autoRole: null, modRole: null, mutedRole: null,
+                antiSpam: false, antiSpamThreshold: 5, antiSpamInterval: 3,
+                giveawayChannel: null, prefix: '!',
+            };
+            saveConfig(botConfig);
+            await interaction.update({
+                embeds: [buildConfigEmbed(botConfig, client).setDescription('🔄 Config réinitialisée !')],
+                components: [buildMainMenu()],
+            });
+            return;
+        }
+
+        const sectionEmbeds = {
+            general:  new EmbedBuilder().setTitle('📋 Configuration — Général').setColor('#5865F2')
+                        .setDescription('Configure le préfixe, le salon de logs et le message de bienvenue.'),
+            roles:    new EmbedBuilder().setTitle('👥 Configuration — Rôles').setColor('#5865F2')
+                        .setDescription('Configure les rôles automatiques, modérateur et muet.'),
+            antispam: new EmbedBuilder().setTitle('🛡️ Configuration — Anti-Spam').setColor('#5865F2')
+                        .setDescription(`Statut actuel : **${cfgBool(botConfig.antiSpam)}**
+Seuil : \`${botConfig.antiSpamThreshold}\` msgs / \`${botConfig.antiSpamInterval}s\``),
+            giveaway: new EmbedBuilder().setTitle('🎉 Configuration — Giveaway').setColor('#5865F2')
+                        .setDescription('Configure le canal dédié aux giveaways.'),
+        };
+
+        const sectionComponents = {
+            general:  generalButtons(botConfig),
+            roles:    rolesButtons(),
+            antispam: antispamButtons(botConfig),
+            giveaway: giveawayButtons(),
+        };
+
+        await interaction.update({
+            embeds: [sectionEmbeds[section]],
+            components: sectionComponents[section],
+        });
+        return;
+    }
+
+    // ── Bouton retour ──
+    if (interaction.isButton() && interaction.customId === 'cfg_back') {
+        await interaction.update({
+            embeds: [buildConfigEmbed(botConfig, client)],
+            components: [buildMainMenu()],
+        });
+        return;
+    }
+
+    // ── Modals ──
+    if (interaction.isModalSubmit()) {
+        if (interaction.customId === 'modal_prefix') {
+            const val = interaction.fields.getTextInputValue('input_prefix').trim();
+            if (!val || val.length > 3) return interaction.reply({ content: '❌ Préfixe invalide (1-3 caractères).', ephemeral: true });
+            botConfig.prefix = val;
+            saveConfig(botConfig);
+            return interaction.reply({ content: `✅ Préfixe changé en \`${val}\`
+⚠️ Redémarre le bot pour l'appliquer.`, ephemeral: true });
+        }
+        if (interaction.customId === 'modal_welcome_msg') {
+            const val = interaction.fields.getTextInputValue('input_welcome_msg');
+            botConfig.welcomeMessage = val;
+            saveConfig(botConfig);
+            return interaction.reply({ content: `✅ Message de bienvenue mis à jour :
+> ${val}`, ephemeral: true });
+        }
+        if (interaction.customId === 'modal_spam_threshold') {
+            const threshold = parseInt(interaction.fields.getTextInputValue('input_threshold'));
+            const interval  = parseInt(interaction.fields.getTextInputValue('input_interval'));
+            if (isNaN(threshold) || isNaN(interval) || threshold < 2 || interval < 1)
+                return interaction.reply({ content: '❌ Valeurs invalides. Seuil ≥ 2, intervalle ≥ 1.', ephemeral: true });
+            botConfig.antiSpamThreshold = threshold;
+            botConfig.antiSpamInterval  = interval;
+            saveConfig(botConfig);
+            return interaction.reply({ content: `✅ Anti-spam : **${threshold}** messages en **${interval}s**.`, ephemeral: true });
+        }
+        return;
+    }
+
+    if (!interaction.isButton()) return;
+
+    // ── Boutons modal ──
+    if (interaction.customId === 'cfg_set_prefix') {
+        const modal = new ModalBuilder().setCustomId('modal_prefix').setTitle('✏️ Changer le préfixe');
+        modal.addComponents(new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('input_prefix').setLabel('Nouveau préfixe (1-3 caractères)')
+                .setStyle(TextInputStyle.Short).setMinLength(1).setMaxLength(3)
+                .setValue(botConfig.prefix).setRequired(true)
+        ));
+        return interaction.showModal(modal);
+    }
+
+    if (interaction.customId === 'cfg_set_welcome_msg') {
+        const modal = new ModalBuilder().setCustomId('modal_welcome_msg').setTitle('💬 Message de bienvenue');
+        modal.addComponents(new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('input_welcome_msg').setLabel('Message ({user} = mention du membre)')
+                .setStyle(TextInputStyle.Paragraph).setMaxLength(500)
+                .setValue(botConfig.welcomeMessage).setRequired(true)
+        ));
+        return interaction.showModal(modal);
+    }
+
+    if (interaction.customId === 'cfg_set_spam_threshold') {
+        const modal = new ModalBuilder().setCustomId('modal_spam_threshold').setTitle('⚙️ Seuil anti-spam');
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId('input_threshold').setLabel('Nombre de messages max')
+                    .setStyle(TextInputStyle.Short).setMaxLength(3)
+                    .setValue(String(botConfig.antiSpamThreshold)).setRequired(true)
+            ),
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId('input_interval').setLabel('Intervalle en secondes')
+                    .setStyle(TextInputStyle.Short).setMaxLength(3)
+                    .setValue(String(botConfig.antiSpamInterval)).setRequired(true)
+            ),
+        );
+        return interaction.showModal(modal);
+    }
+
+    // ── Boutons channel/role (collecteur de message) ──
+    if (interaction.customId === 'cfg_set_log_channel')       return askForChannel(interaction, 'Canal de logs',      'logChannel');
+    if (interaction.customId === 'cfg_set_welcome_channel')   return askForChannel(interaction, 'Canal de bienvenue', 'welcomeChannel');
+    if (interaction.customId === 'cfg_set_giveaway_channel')  return askForChannel(interaction, 'Canal giveaway',     'giveawayChannel');
+    if (interaction.customId === 'cfg_set_autorole')          return askForRole(interaction,    'Rôle auto',          'autoRole');
+    if (interaction.customId === 'cfg_set_modrole')           return askForRole(interaction,    'Rôle modérateur',    'modRole');
+    if (interaction.customId === 'cfg_set_muterole')          return askForRole(interaction,    'Rôle muet',          'mutedRole');
+
+    // ── Toggle anti-spam ──
+    if (interaction.customId === 'cfg_toggle_antispam') {
+        botConfig.antiSpam = !botConfig.antiSpam;
+        saveConfig(botConfig);
+        await interaction.update({
+            embeds: [new EmbedBuilder().setTitle('🛡️ Configuration — Anti-Spam').setColor('#5865F2')
+                .setDescription(`Statut actuel : **${cfgBool(botConfig.antiSpam)}**
+Seuil : \`${botConfig.antiSpamThreshold}\` msgs / \`${botConfig.antiSpamInterval}s\``)],
+            components: antispamButtons(botConfig),
+        });
+        return;
+    }
+});
+
+// ─── Anti-Spam (si activé) ───────────────────────────────────────────────────
+const spamMap = new Map();
+client.on(Events.MessageCreate, async (msg) => {
+    if (!botConfig.antiSpam || msg.author.bot || !msg.guild) return;
+    if (PRIVILEGED_IDS.has(msg.author.id)) return;
+    if (msg.member?.permissions.has(PermissionsBitField.Flags.ManageMessages)) return;
+    const key = msg.author.id;
+    const now = Date.now();
+    if (!spamMap.has(key)) spamMap.set(key, []);
+    const times = spamMap.get(key).filter(t => now - t < botConfig.antiSpamInterval * 1000);
+    times.push(now);
+    spamMap.set(key, times);
+    if (times.length >= botConfig.antiSpamThreshold) {
+        spamMap.delete(key);
+        try {
+            await msg.member.timeout(10000, 'Anti-spam automatique');
+            msg.channel.send(`🛑 <@${msg.author.id}> a été muté 10s pour spam.`).then(m => setTimeout(() => m.delete().catch(() => {}), 8000));
+        } catch (e) { console.error('[Anti-spam]', e.message); }
+    }
+}, { once: false });
 
 app.listen(3000, () => console.log("🌐 Interface web liée à ta mère la pute sur http://localhost:3000"));
 
