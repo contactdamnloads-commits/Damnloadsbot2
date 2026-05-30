@@ -265,13 +265,14 @@ client.on(Events.MessageCreate, async (message) => {
                     .setTitle('📚 Liste des Commandes').setColor('#00ff00')
                     .setThumbnail(client.user.displayAvatarURL())
                     .addFields(
-                        { name: '🛠️ Modération', value: '`kick`, `ban`, `tempban`, `timeout`, `untimeout`, `clear`, `warn`' },
-                        { name: '🛡️ Sécurité', value: '`lock`, `unlock`, `raidmode` (Admin uniquement)' },
-                        { name: '⚙️ Configuration', value: '`slowmode [sec]`, `userinfo`' },
-                        { name: '🎉 Giveaway', value: '`giveaway start <durée> <gagnants> <prix>`\n`giveaway end <messageId>`\n`giveaway reroll <messageId>`\n`giveaway list`' },
-                        { name: '🌐 Autres', value: '`site` (dans le canal dédié), `help`' }
+                        { name: '🛠️ Modération', value: '`!kick @user [raison]` — Expulser un membre\n`!ban @user [raison]` — Bannir un membre *(Admin)*\n`!tempban @user <durée> [raison]` — Bannir temporairement *(Admin)*\n`!timeout @user <durée>` — Mettre en sourdine (ex: `10m`)\n`!untimeout @user` — Retirer la mise en sourdine\n`!warn @user [raison]` — Avertir un membre\n`!clear <1-100>` — Supprimer des messages' },
+                        { name: '🛡️ Sécurité', value: '`!lock` — Verrouiller le salon\n`!unlock` — Déverrouiller le salon\n`!raidmode` — Activer/désactiver le mode raid *(Admin)*' },
+                        { name: '⚙️ Configuration', value: '`!slowmode <secondes>` — Définir le slowmode du salon' },
+                        { name: '🔍 Informations', value: '`!dlinfo [@user]` — Afficher le profil Damnloads d\'un membre\n`!id @user` — Afficher l\'ID Discord d\'un membre' },
+                        { name: '🎉 Giveaway', value: '`!giveaway start <durée> <gagnants> <prix>` — Lancer un giveaway\n`!giveaway end <messageId>` — Terminer un giveaway\n`!giveaway reroll <messageId>` — Retirer au sort\n`!giveaway list` — Voir les giveaways en cours\n*(alias : `!gw`)' },
+                        { name: '🌐 Autres', value: '`site` (dans le canal dédié) — Accès au site\n`!help` — Afficher cette aide' }
                     )
-                    .setFooter({ text: 'Prefix actuel : !' })
+                    .setFooter({ text: 'Prefix actuel : ! • (Mod) = Modérateur requis • (Admin) = Administrateur requis' })
                 ]});
                 break;
             }
