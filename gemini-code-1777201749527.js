@@ -100,7 +100,7 @@ async function loadConfig() {
     return data ?? {
         logChannel: null, welcomeChannel: null,
         welcomeMessage: 'Bienvenue sur le serveur, {user} ! 🎉',
-        autoRole: null, modRole: null, mutedRole: null,
+        autoRole: null, adminRole: null, modRole: null, mutedRole: null,
         antiSpam: false, antiSpamThreshold: 5, antiSpamInterval: 3,
         giveawayChannel: null, gameNotifChannel: null, prefix: '!',
     };
@@ -123,7 +123,7 @@ async function saveState(s)       { await dbSet('state', s); }
 let botConfig = {
     logChannel: null, welcomeChannel: null,
     welcomeMessage: 'Bienvenue sur le serveur, {user} ! 🎉',
-    autoRole: null, modRole: null, mutedRole: null,
+    autoRole: null, adminRole: null, modRole: null, mutedRole: null,
     antiSpam: false, antiSpamThreshold: 5, antiSpamInterval: 3,
     giveawayChannel: null, gameNotifChannel: null, prefix: '!',
 };
@@ -310,17 +310,46 @@ client.once('ready', async () => {
     // Scan du rôle Soutien au démarrage (utilise le cache déjà chargé)
     await syncAllSoutienRoles();
 
-    const updateStatus = () => {
+    // ── Rich Presence rotatif ────────────────────────────────────────────────
+    let presenceIndex = 0;
+
+    const PRESENCE_SLIDES = (guild) => [
+        {
+            activity: { name: `👥 ${guild.memberCount} membres`, type: ActivityType.Watching },
+            status: 'online',
+        },
+        {
+            activity: { name: `📢 Invitez un maximum !`, type: ActivityType.Playing },
+            status: 'online',
+        },
+        {
+            activity: { name: `🌐 damnloads.com`, type: ActivityType.Watching },
+            status: 'online',
+        },
+        {
+            activity: { name: `🎮 Rejoins le serveur !`, type: ActivityType.Playing },
+            status: 'online',
+        },
+        {
+            activity: { name: `💎 ${guild.premiumSubscriptionCount || 0} boosts`, type: ActivityType.Watching },
+            status: 'online',
+        },
+    ];
+
+    const rotatePresence = () => {
         const guild = client.guilds.cache.get(SERVER_ID);
-        if (guild) {
-            client.user.setPresence({
-                activities: [{ name: `DamnLoads | ${guild.memberCount} membres`, type: ActivityType.Watching }],
-                status: 'online',
-            });
-        }
+        if (!guild) return;
+        const slides = PRESENCE_SLIDES(guild);
+        const slide = slides[presenceIndex % slides.length];
+        client.user.setPresence({
+            activities: [slide.activity],
+            status: slide.status,
+        });
+        presenceIndex++;
     };
-    updateStatus();
-    setInterval(updateStatus, 600000);
+
+    rotatePresence();
+    setInterval(rotatePresence, 6000); // 6s — respecte le rate-limit Discord (min 5s)
 });
 
 
@@ -486,8 +515,10 @@ client.on(Events.MessageCreate, async (message) => {
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    const isMod = message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers);
-    const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+    const isMod = message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)
+        || (botConfig.modRole && message.member.roles.cache.has(botConfig.modRole));
+    const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator)
+        || (botConfig.adminRole && message.member.roles.cache.has(botConfig.adminRole));
 
     try {
         switch (command) {
@@ -898,7 +929,7 @@ client.on(Events.MessageCreate, async (message) => {
             }
 
             case 'config': {
-                if (!PRIVILEGED_IDS.has(message.author.id) && !isAdmin)
+                if (!PRIVILEGED_IDS.has(message.author.id) && !isAdmin && !isMod)
                     return message.reply('❌ Réservé aux admins et fondateurs.');
                 return sendConfigMenu(message.channel, botConfig, client);
             }
@@ -1147,6 +1178,7 @@ function buildConfigEmbed(cfg, client) {
               inline: false },
             { name: '👥 Rôles', value:
                 `**Rôle auto (nouveau membre) :** ${cfgRole(cfg.autoRole)}\n` +
+                `**Rôle admin :** ${cfgRole(cfg.adminRole)}\n` +
                 `**Rôle modérateur :** ${cfgRole(cfg.modRole)}\n` +
                 `**Rôle muet :** ${cfgRole(cfg.mutedRole)}`,
               inline: false },
@@ -1206,7 +1238,10 @@ function rolesButtons() {
     return [
         new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('cfg_set_autorole').setLabel('🤖 Rôle auto').setStyle(2),
+            new ButtonBuilder().setCustomId('cfg_set_adminrole').setLabel('👑 Rôle admin').setStyle(2),
             new ButtonBuilder().setCustomId('cfg_set_modrole').setLabel('🛠️ Rôle modérateur').setStyle(2),
+        ),
+        new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('cfg_set_muterole').setLabel('🔇 Rôle muet').setStyle(2),
             new ButtonBuilder().setCustomId('cfg_back').setLabel('↩ Retour').setStyle(4),
         ),
@@ -1295,7 +1330,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             botConfig = {
                 logChannel: null, welcomeChannel: null,
                 welcomeMessage: 'Bienvenue sur le serveur, {user} ! 🎉',
-                autoRole: null, modRole: null, mutedRole: null,
+                autoRole: null, adminRole: null, modRole: null, mutedRole: null,
                 antiSpam: false, antiSpamThreshold: 5, antiSpamInterval: 3,
                 giveawayChannel: null, gameNotifChannel: null, prefix: '!',
             };
@@ -1414,6 +1449,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'cfg_set_giveaway_channel')  return askForChannel(interaction, 'Canal giveaway',         'giveawayChannel');
     if (interaction.customId === 'cfg_set_gamenotif_channel') return askForChannel(interaction, 'Canal notifs jeux',      'gameNotifChannel');
     if (interaction.customId === 'cfg_set_autorole')          return askForRole(interaction,    'Rôle auto',          'autoRole');
+    if (interaction.customId === 'cfg_set_adminrole')         return askForRole(interaction,    'Rôle admin',         'adminRole');
     if (interaction.customId === 'cfg_set_modrole')           return askForRole(interaction,    'Rôle modérateur',    'modRole');
     if (interaction.customId === 'cfg_set_muterole')          return askForRole(interaction,    'Rôle muet',          'mutedRole');
 
